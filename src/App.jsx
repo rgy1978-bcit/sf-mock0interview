@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from "react";
+import Avatar from "./Avatar.jsx";
+import SelfView from "./SelfView.jsx";
 
 const JOBS = [
   { id: "canes", emoji: "🍗", title: "Restaurant Crewmember", company: "Raising Cane's Chicken Fingers", interviewer: "Sarah Mitchell", interviewerTitle: "Hiring Manager", accent: "#B8860B", accentBg: "#FDF8EC", voiceGender: "female" },
@@ -45,26 +47,42 @@ const TYPE_LABELS = {
   final: "Your turn to ask",
 };
 
-const FILLERS = ["um","uh","like","you know","so basically","basically","literally","kind of","sort of","i mean","right so","okay so","well um","I mean like"];
+const FILLERS = [
+  "i mean like","so basically","right so","okay so","well um","you know","i mean","kind of","sort of",
+  "basically","literally","like","um","uh",
+];
 
+// Longest phrases first, and once a span matches we mask those chars so
+// shorter phrases inside can't double-count ("so basically" no longer also
+// scores "basically").
 function detectFillers(text) {
   const lower = text.toLowerCase();
+  const mask = new Array(lower.length).fill(false);
   const found = {};
   let total = 0;
-  FILLERS.forEach(fw => {
+  for (const fw of FILLERS) {
     const esc = fw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const m = lower.match(new RegExp(`\\b${esc}\\b`, "gi"));
-    if (m) { found[fw] = m.length; total += m.length; }
-  });
+    const re = new RegExp(`\\b${esc}\\b`, "gi");
+    let m, count = 0;
+    while ((m = re.exec(lower)) !== null) {
+      let masked = false;
+      for (let i = m.index; i < m.index + m[0].length; i++) if (mask[i]) { masked = true; break; }
+      if (masked) continue;
+      for (let i = m.index; i < m.index + m[0].length; i++) mask[i] = true;
+      count += 1;
+    }
+    if (count > 0) { found[fw] = count; total += count; }
+  }
   return { found, total };
 }
 
 function shuffle(a) { return [...a].sort(() => Math.random() - 0.5); }
 
 function buildQuestions() {
+  const beh = shuffle(BEHAVIORAL);
   const mid = shuffle([
-    { text: shuffle(BEHAVIORAL)[0], type: "behavioral" },
-    { text: shuffle(BEHAVIORAL)[1], type: "behavioral" },
+    { text: beh[0], type: "behavioral" },
+    { text: beh[1], type: "behavioral" },
     { text: shuffle(SITUATIONAL)[0], type: "situational" },
     { text: shuffle(GENERAL)[0], type: "general" },
   ]);
@@ -118,7 +136,7 @@ async function getFeedback(job, question, answer, metrics) {
   const isFin = question.type === "final";
   let delivery = "";
   if (metrics) {
-    const pace = metrics.wpm < 5 ? "" : metrics.wpm < 110 ? `${metrics.wpm} WPM, a bit slow` : metrics.wpm > 195 ? `${metrics.wpm} WPM, quite fast` : `${metrics.wpm} WPM, good pace`;
+    const pace = metrics.wpm < 5 ? "" : metrics.wpm < 95 ? `${metrics.wpm} WPM, a bit slow` : metrics.wpm > 210 ? `${metrics.wpm} WPM, quite fast` : `${metrics.wpm} WPM, good pace`;
     const fill = metrics.fillers.total === 0 ? "No filler words" : `${metrics.fillers.total} filler words: ${Object.entries(metrics.fillers.found).map(([w, c]) => `"${w}" x${c}`).join(", ")}`;
     delivery = `\nSPEECH DATA: ${fill}. Pace: ${pace}. Length: ${metrics.wordCount} words, ${metrics.duration}s.`;
   }
@@ -173,6 +191,10 @@ export default function App() {
   const [answers, setAnswers] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loadSum, setLoadSum] = useState(false);
+  const [fbError, setFbError] = useState("");
+  const [showStarHint, setShowStarHint] = useState(false);
+  const [selfView, setSelfView] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
 
   const recRef = useRef(null);
   const stopFlagRef = useRef(false);
@@ -185,14 +207,16 @@ export default function App() {
   const fbRef = useRef(null);
   const voicesRef = useRef([]);
   const audioRef = useRef(null);
+  const speakSeqRef = useRef(0);
 
   useEffect(() => {
     if (!window.SpeechRecognition && !window.webkitSpeechRecognition) { setSpeechOk(false); setMode("text"); }
     const loadVoices = () => { voicesRef.current = window.speechSynthesis?.getVoices() || []; };
     loadVoices();
-    if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = loadVoices;
+    const synth = window.speechSynthesis;
+    if (synth) synth.onvoiceschanged = loadVoices;
     return () => {
-      if (window.speechSynthesis) window.speechSynthesis.cancel();
+      if (synth) { synth.onvoiceschanged = null; synth.cancel(); }
       stopCurrentAudio();
       cleanupMic();
     };
@@ -202,11 +226,14 @@ export default function App() {
     if (screen === "interview" && job && questions.length > 0) {
       setQuestionReady(false);
       setFeedback(null);
+      setFbError("");
+      setShowStarHint(false);
       const q = questions[qi];
       const intro = qi === 0 ? `Hi, I'm ${job.interviewer}, ${job.interviewerTitle} at ${job.company}. Thanks for coming in today. Let's get started. ` : "";
       speakText(`${intro}${q.text}`, job.voiceGender, () => setQuestionReady(true));
     }
-  }, [qi, screen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qi, screen, retryKey]);
 
   useEffect(() => {
     if (feedback) {
@@ -228,16 +255,25 @@ export default function App() {
 
   async function speakText(text, gender = "female", onEnd = null) {
     stopCurrentAudio();
+    const seq = ++speakSeqRef.current;
     setIsSpeaking(true);
     try {
       const url = await fetchTTS(text, gender);
+      if (seq !== speakSeqRef.current) { URL.revokeObjectURL(url); return; }
       const audio = new Audio(url);
       audio._blobUrl = url;
       audioRef.current = audio;
-      audio.onended = () => { URL.revokeObjectURL(url); audioRef.current = null; setIsSpeaking(false); if (onEnd) onEnd(); };
-      audio.onerror = () => { URL.revokeObjectURL(url); audioRef.current = null; setIsSpeaking(false); if (onEnd) onEnd(); };
+      audio.onended = () => {
+        if (seq !== speakSeqRef.current) return;
+        URL.revokeObjectURL(url); audioRef.current = null; setIsSpeaking(false); if (onEnd) onEnd();
+      };
+      audio.onerror = () => {
+        if (seq !== speakSeqRef.current) return;
+        URL.revokeObjectURL(url); audioRef.current = null; setIsSpeaking(false); if (onEnd) onEnd();
+      };
       await audio.play();
     } catch (e) {
+      if (seq !== speakSeqRef.current) return;
       console.warn("Azure TTS failed, falling back to browser voices:", e);
       fallbackSpeak(text, gender, onEnd);
     }
@@ -351,13 +387,24 @@ export default function App() {
     if (!ans || loadFb) return;
     stopSpeaking();
     setLoadFb(true);
+    setFbError("");
     try {
       const m = mode === "voice" ? metrics : null;
       const fb = await getFeedback(job, questions[qi], ans, m);
       setFeedback(fb);
       setAnswers(p => [...p, { question: questions[qi].text, type: questions[qi].type, answer: ans, metrics: m }]);
-    } catch { setFeedback("Good effort! Focus on specific real-life examples from your own life."); }
+    } catch (e) {
+      setFbError(e?.message || "Coach is unavailable right now. Your answer was saved — try again in a moment.");
+    }
     setLoadFb(false);
+  }
+
+  function tryAgain() {
+    stopSpeaking();
+    setFeedback(null);
+    setFbError("");
+    clearAns();
+    setRetryKey(k => k + 1);
   }
 
   async function next() {
@@ -435,6 +482,9 @@ export default function App() {
             </button>
           ))}
         </div>
+        <div style={{ marginTop: 24, textAlign: "center", fontSize: 11, color: "#9ca3af", lineHeight: 1.6, maxWidth: 520, marginLeft: "auto", marginRight: "auto" }}>
+          Your answers are not stored by this app. Your spoken text is sent to Google (for feedback) and Microsoft (for the interviewer's voice) to generate this session. If you turn the camera on, video stays on your device — nothing is uploaded.
+        </div>
       </div>
     </div>
   );
@@ -493,13 +543,19 @@ export default function App() {
         `}</style>
         <div style={S.center}>
           <div style={{ ...S.card, marginBottom: 12, display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ width: 46, height: 46, borderRadius: "50%", background: job.accent, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 500, fontSize: 15, flexShrink: 0, animation: isSpeaking ? "avatarGlow 1.2s ease-in-out infinite" : "none" }}>
-              {job.interviewer.split(" ").map(n => n[0]).join("")}
-            </div>
-            <div style={{ flex: 1 }}>
+            <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={isSpeaking} size={64} />
+            <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 500, fontSize: 14 }}>{job.interviewer}</div>
               <div style={S.muted}>{job.interviewerTitle} · {job.company}</div>
+              <button
+                onClick={() => setSelfView(v => !v)}
+                aria-pressed={selfView}
+                style={{ marginTop: 6, fontSize: 11, padding: "3px 8px", borderRadius: 8, border: "0.5px solid #e5e7eb", background: selfView ? job.accentBg : "#fff", color: selfView ? job.accent : "#6b7280", cursor: "pointer" }}
+              >
+                {selfView ? "📷 Camera on — practice eye contact" : "📷 Turn camera on to practice eye contact"}
+              </button>
             </div>
+            {selfView && <SelfView accent={job.accent} />}
             <div style={{ textAlign: "right" }}>
               <div style={S.muted}>Question</div>
               <div style={{ fontWeight: 500, fontSize: 20 }}>{qi + 1}<span style={{ color: "#6b7280" }}>/{questions.length}</span></div>
@@ -520,9 +576,27 @@ export default function App() {
             <div style={{ color: "#6b7280", fontStyle: "italic", marginBottom: 4, fontSize: 12 }}>{job.interviewer} asks:</div>
             <div style={{ fontSize: 17, fontWeight: 500, lineHeight: 1.6, marginBottom: q.type === "behavioral" || q.type === "final" ? 14 : 0 }}>"{q.text}"</div>
             {q.type === "behavioral" && (
-              <div style={{ background: job.accentBg, border: `0.5px solid ${job.accent}44`, borderRadius: 8, padding: "8px 12px", fontSize: 12, color: job.accent }}>
-                ⭐ STAR: Situation → Task → Action → Result
-              </div>
+              <>
+                <div style={{ background: job.accentBg, border: `0.5px solid ${job.accent}44`, borderRadius: 8, padding: "8px 12px", fontSize: 12, color: job.accent, marginBottom: 6 }}>
+                  ⭐ STAR: Situation → Task → Action → Result
+                </div>
+                <button
+                  onClick={() => setShowStarHint(v => !v)}
+                  aria-expanded={showStarHint}
+                  style={{ fontSize: 12, background: "none", border: "0.5px dashed #d1d5db", borderRadius: 8, padding: "6px 10px", cursor: "pointer", color: "#6b7280", width: "100%", textAlign: "left" }}
+                >
+                  {showStarHint ? "− Hide starter template" : "+ Need help starting? Show a template"}
+                </button>
+                {showStarHint && (
+                  <div style={{ marginTop: 8, background: "#f9fafb", border: "0.5px solid #e5e7eb", borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#6b7280", lineHeight: 1.7 }}>
+                    <div><strong style={{ color: "#111827", fontWeight: 500 }}>Situation:</strong> "Last year during [class / job / activity]…"</div>
+                    <div><strong style={{ color: "#111827", fontWeight: 500 }}>Task:</strong> "My role was to…"</div>
+                    <div><strong style={{ color: "#111827", fontWeight: 500 }}>Action:</strong> "So I decided to… and then I…"</div>
+                    <div><strong style={{ color: "#111827", fontWeight: 500 }}>Result:</strong> "In the end, ___. What I took away was ___."</div>
+                    <div style={{ marginTop: 6, fontStyle: "italic", color: "#9ca3af" }}>Use your own real example — don't read this out loud.</div>
+                  </div>
+                )}
+              </>
             )}
             {q.type === "final" && (
               <div style={{ background: "#f9fafb", border: "0.5px solid #e5e7eb", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#6b7280" }}>
@@ -568,14 +642,22 @@ export default function App() {
                       </div>
                       <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 28 }}>{bars}</div>
                       {isRec
-                        ? <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}><div style={{ fontSize: 20, fontWeight: 500, color: "#C62828", fontVariantNumeric: "tabular-nums" }}>{fmtTime(elapsed)}</div><div style={{ color: "#6b7280", fontSize: 11 }}>Tap ⏹ to stop</div></div>
+                        ? <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                            <div style={{ fontSize: 20, fontWeight: 500, color: elapsed >= 90 ? "#E65100" : "#C62828", fontVariantNumeric: "tabular-nums" }}>{fmtTime(elapsed)}</div>
+                            <div style={{ color: "#6b7280", fontSize: 11 }}>Tap ⏹ to stop</div>
+                            {elapsed >= 90 && (
+                              <div role="status" style={{ marginTop: 4, fontSize: 11, color: "#E65100", background: "#FFF8E1", border: "0.5px solid #FFAB40", borderRadius: 8, padding: "3px 8px" }}>
+                                Great interview answers are 60–90 seconds — wrap up when ready.
+                              </div>
+                            )}
+                          </div>
                         : <div style={{ color: "#6b7280", fontSize: 12 }}>Tap 🎤 to start speaking your answer</div>}
                     </div>
                   )}
                   {(isRec || finalText) && (
                     <div style={{ background: "#f9fafb", border: "0.5px solid #e5e7eb", borderRadius: 8, padding: "12px 14px", minHeight: 60, marginBottom: 12 }}>
                       <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>Transcript</div>
-                      <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+                      <div aria-live="polite" aria-atomic="false" style={{ fontSize: 13, lineHeight: 1.7 }}>
                         {finalText}
                         {liveText && <span style={{ color: "#9ca3af" }}> {liveText}</span>}
                         {!finalText && !liveText && isRec && <span style={{ color: "#9ca3af", fontStyle: "italic" }}>Listening…</span>}
@@ -585,7 +667,7 @@ export default function App() {
                   {recorded && metrics && (
                     <div style={{ marginBottom: 12 }}>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                        {metrics.wpm > 0 && (() => { const ok = metrics.wpm >= 110 && metrics.wpm <= 195; return <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: ok ? "#EDF7EE" : "#FFF8E1", color: ok ? "#2E7D32" : "#E65100", border: `0.5px solid ${ok ? "#81C784" : "#FFAB40"}` }}>{metrics.wpm} WPM · {ok ? "Good pace" : metrics.wpm < 110 ? "Slow — speak faster" : "Fast — slow down"}</span>; })()}
+                        {metrics.wpm > 0 && (() => { const ok = metrics.wpm >= 95 && metrics.wpm <= 210; return <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: ok ? "#EDF7EE" : "#FFF8E1", color: ok ? "#2E7D32" : "#E65100", border: `0.5px solid ${ok ? "#81C784" : "#FFAB40"}` }}>{metrics.wpm} WPM · {ok ? "Good pace" : metrics.wpm < 95 ? "Slow — speak faster" : "Fast — slow down"}</span>; })()}
                         {(() => { const f = metrics.fillers.total; return <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: f === 0 ? "#EDF7EE" : f <= 2 ? "#FFF8E1" : "#FBEAEA", color: f === 0 ? "#2E7D32" : f <= 2 ? "#E65100" : "#A32D2D", border: `0.5px solid ${f === 0 ? "#81C784" : f <= 2 ? "#FFAB40" : "#EF9A9A"}` }}>{f === 0 ? "No filler words ✓" : `${f} filler word${f > 1 ? "s" : ""} — ${Object.keys(metrics.fillers.found).slice(0, 2).map(w => `"${w}"`).join(", ")}`}</span>; })()}
                         <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#f9fafb", color: "#6b7280", border: "0.5px solid #e5e7eb" }}>{metrics.wordCount} words · {fmtTime(metrics.duration)}</span>
                       </div>
@@ -610,6 +692,12 @@ export default function App() {
                   {loadFb ? <><span style={{ width: 14, height: 14, border: "2px solid #ffffff66", borderTopColor: "#fff", borderRadius: "50%", display: "inline-block", animation: "spin 0.7s linear infinite" }} /> Getting feedback…</> : "Submit answer →"}
                 </button>
               </div>
+              {fbError && (
+                <div role="alert" style={{ marginTop: 12, background: "#FBEAEA", border: "0.5px solid #EF9A9A", borderRadius: 8, padding: "10px 12px", fontSize: 13, color: "#A32D2D", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span>{fbError}</span>
+                  <button onClick={submit} style={{ fontSize: 12, padding: "4px 10px", borderRadius: 8, border: "0.5px solid #A32D2D", background: "#fff", color: "#A32D2D", cursor: "pointer" }}>Retry</button>
+                </div>
+              )}
             </div>
           )}
 
@@ -624,9 +712,21 @@ export default function App() {
                 <div style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.6 }}>{mode === "voice" ? finalText : textAns}</div>
               </div>
               {renderFeedback(feedback)}
-              <button onClick={next} style={{ marginTop: 16, width: "100%", background: job.accent, color: "#fff", border: "none", borderRadius: 8, padding: 12, fontSize: 14, fontWeight: 500, cursor: "pointer" }}>
-                {isLast ? "Complete interview and see summary →" : "Next question →"}
-              </button>
+              <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+                <button
+                  onClick={tryAgain}
+                  style={{ flex: "1 1 40%", background: "#fff", color: job.accent, border: `0.5px solid ${job.accent}`, borderRadius: 8, padding: 12, fontSize: 14, fontWeight: 500, cursor: "pointer" }}
+                  aria-label="Try this question again without advancing"
+                >
+                  ↻ Try this question again
+                </button>
+                <button
+                  onClick={next}
+                  style={{ flex: "1 1 55%", background: job.accent, color: "#fff", border: "none", borderRadius: 8, padding: 12, fontSize: 14, fontWeight: 500, cursor: "pointer" }}
+                >
+                  {isLast ? "Complete interview →" : "Next question →"}
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -641,12 +741,44 @@ export default function App() {
     const wpmArr = answers.filter(a => a.metrics?.wpm > 0).map(a => a.metrics.wpm);
     const avgWpm = wpmArr.length > 0 ? Math.round(wpmArr.reduce((a, b) => a + b, 0) / wpmArr.length) : 0;
 
+    function downloadRecap() {
+      const dateStr = new Date().toLocaleString();
+      const lines = [];
+      lines.push(`Mock Interview Practice — Session Recap`);
+      lines.push(`${job.title} at ${job.company}`);
+      lines.push(`Interviewer: ${job.interviewer}, ${job.interviewerTitle}`);
+      lines.push(`Date: ${dateStr}`);
+      lines.push("");
+      if (voiceCount > 0) {
+        lines.push(`Delivery summary — voice answers: ${voiceCount}, total filler words: ${totalFillers}, average pace: ${avgWpm > 0 ? avgWpm + " WPM" : "—"}`);
+        lines.push("");
+      }
+      lines.push("──── Coach summary ────");
+      lines.push(summary || "(not available)");
+      lines.push("");
+      lines.push("──── Questions and answers ────");
+      answers.forEach((a, i) => {
+        lines.push(`\nQ${i + 1} [${a.type}]: ${a.question}`);
+        lines.push(`Answer: ${a.answer}`);
+        if (a.metrics) lines.push(`Delivery: ${a.metrics.wpm} WPM · ${a.metrics.fillers.total} filler word${a.metrics.fillers.total === 1 ? "" : "s"} · ${a.metrics.wordCount} words · ${fmtTime(a.metrics.duration)}`);
+      });
+      const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `mock-interview-${job.id}-${new Date().toISOString().slice(0, 10)}.txt`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
     return (
       <div style={S.wrap}>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         <div style={S.center}>
           <div style={{ textAlign: "center", marginBottom: 24 }}>
-            <div style={{ fontSize: 40, marginBottom: 10 }}>🎉</div>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+              <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={false} size={72} />
+            </div>
             <div style={{ fontSize: 22, fontWeight: 500, marginBottom: 4 }}>Interview complete</div>
             <div style={S.muted}>{job.title} · {job.company}</div>
           </div>
@@ -689,6 +821,9 @@ export default function App() {
             ))}
           </div>
 
+          <button onClick={downloadRecap} style={{ width: "100%", background: "#fff", color: job.accent, border: `0.5px solid ${job.accent}`, borderRadius: 8, padding: 12, fontSize: 14, fontWeight: 500, cursor: "pointer", marginBottom: 10 }}>
+            ⬇ Download recap (text file)
+          </button>
           <button onClick={reset} style={{ width: "100%", background: job.accent, color: "#fff", border: "none", borderRadius: 8, padding: 14, fontSize: 15, fontWeight: 500, cursor: "pointer", marginBottom: 24 }}>
             Practice again with a different job →
           </button>
