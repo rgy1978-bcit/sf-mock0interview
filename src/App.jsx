@@ -543,7 +543,7 @@ export default function App() {
         `}</style>
         <div style={S.center}>
           <div style={{ ...S.card, marginBottom: 12, display: "flex", alignItems: "center", gap: 14 }}>
-            <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={isSpeaking} size={64} />
+            <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={isSpeaking} size={72} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 500, fontSize: 14 }}>{job.interviewer}</div>
               <div style={S.muted}>{job.interviewerTitle} · {job.company}</div>
@@ -777,7 +777,7 @@ export default function App() {
         <div style={S.center}>
           <div style={{ textAlign: "center", marginBottom: 24 }}>
             <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-              <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={false} size={72} />
+              <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={false} size={96} />
             </div>
             <div style={{ fontSize: 22, fontWeight: 500, marginBottom: 4 }}>Interview complete</div>
             <div style={S.muted}>{job.title} · {job.company}</div>
