@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import Avatar from "./Avatar.jsx";
 import SelfView from "./SelfView.jsx";
+import { attachLipSync, detachLipSync } from "./lipsync.js";
 
 const JOBS = [
   { id: "canes", emoji: "🍗", title: "Restaurant Crewmember", company: "Raising Cane's Chicken Fingers", interviewer: "Sarah Mitchell", interviewerTitle: "Hiring Manager", accent: "#B8860B", accentBg: "#FDF8EC", voiceGender: "female" },
@@ -245,6 +246,7 @@ export default function App() {
   }, [feedback]);
 
   function stopCurrentAudio() {
+    detachLipSync();
     if (audioRef.current) {
       audioRef.current.pause();
       if (audioRef.current._blobUrl) URL.revokeObjectURL(audioRef.current._blobUrl);
@@ -263,14 +265,14 @@ export default function App() {
       const audio = new Audio(url);
       audio._blobUrl = url;
       audioRef.current = audio;
-      audio.onended = () => {
+      attachLipSync(audio);
+      const finish = () => {
         if (seq !== speakSeqRef.current) return;
+        detachLipSync();
         URL.revokeObjectURL(url); audioRef.current = null; setIsSpeaking(false); if (onEnd) onEnd();
       };
-      audio.onerror = () => {
-        if (seq !== speakSeqRef.current) return;
-        URL.revokeObjectURL(url); audioRef.current = null; setIsSpeaking(false); if (onEnd) onEnd();
-      };
+      audio.onended = finish;
+      audio.onerror = finish;
       await audio.play();
     } catch (e) {
       if (seq !== speakSeqRef.current) return;
@@ -543,7 +545,7 @@ export default function App() {
         `}</style>
         <div style={S.center}>
           <div style={{ ...S.card, marginBottom: 12, display: "flex", alignItems: "center", gap: 14 }}>
-            <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={isSpeaking} size={64} />
+            <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={isSpeaking} size={72} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 500, fontSize: 14 }}>{job.interviewer}</div>
               <div style={S.muted}>{job.interviewerTitle} · {job.company}</div>
@@ -777,7 +779,7 @@ export default function App() {
         <div style={S.center}>
           <div style={{ textAlign: "center", marginBottom: 24 }}>
             <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-              <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={false} size={72} />
+              <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={false} size={96} />
             </div>
             <div style={{ fontSize: 22, fontWeight: 500, marginBottom: 4 }}>Interview complete</div>
             <div style={S.muted}>{job.title} · {job.company}</div>
