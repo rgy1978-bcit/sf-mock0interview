@@ -3,19 +3,26 @@ import avatarMarcus from "./assets/avatar-marcus.svg";
 import avatarJennifer from "./assets/avatar-jennifer.svg";
 import avatarDavid from "./assets/avatar-david.svg";
 
-// Interviewer identities repeat across some jobs (Jennifer covers both parks
-// & rec jobs; David covers both aquatics jobs), so we key on person, not job.
-const ART_BY_JOB = {
-  canes:   avatarSarah,
+// Keyed on person, not the SF job code — Premia uses the person key directly.
+// For historical reasons the prop is still called jobId; the SF branch sets
+// job.id to the SF job code, and Avatar.SF maps that to a person. On Premia,
+// job.id IS the person key.
+const ART = {
+  sarah: avatarSarah,
+  marcus: avatarMarcus,
+  jennifer: avatarJennifer,
+  david: avatarDavid,
+  // SF legacy keys — kept so this file works on either branch without edits.
+  canes: avatarSarah,
   petplus: avatarMarcus,
-  sfcamp:  avatarJennifer,
-  sfpark:  avatarJennifer,
-  swim:    avatarDavid,
-  guard:   avatarDavid,
+  sfcamp: avatarJennifer,
+  sfpark: avatarJennifer,
+  swim: avatarDavid,
+  guard: avatarDavid,
 };
 
 export default function Avatar({ jobId, accent, accentBg, speaking, size = 140 }) {
-  const src = ART_BY_JOB[jobId] || avatarSarah;
+  const src = ART[jobId] || avatarSarah;
   return (
     <div
       aria-hidden="true"

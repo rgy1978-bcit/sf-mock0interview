@@ -2,40 +2,21 @@ import { useState, useRef, useEffect } from "react";
 import Avatar from "./Avatar.jsx";
 import SelfView from "./SelfView.jsx";
 
-const JOBS = [
-  { id: "canes", emoji: "🍗", title: "Restaurant Crewmember", company: "Raising Cane's Chicken Fingers", interviewer: "Sarah Mitchell", interviewerTitle: "Hiring Manager", accent: "#B8860B", accentBg: "#FDF8EC", voiceGender: "female" },
-  { id: "petplus", emoji: "🐾", title: "Store Team Member", company: "Pet Supplies Plus", interviewer: "Marcus Chen", interviewerTitle: "Store Manager", accent: "#C14E1A", accentBg: "#FDF2EC", voiceGender: "male" },
-  { id: "sfcamp", emoji: "⛺", title: "Summer Camp Counselor", company: "SF Township Parks & Rec", interviewer: "Jennifer Kowalski", interviewerTitle: "Recreation Coordinator", accent: "#2E7D32", accentBg: "#EDF7EE", voiceGender: "female" },
-  { id: "sfpark", emoji: "💦", title: "Park Attendant – Splash Pad", company: "SF Township Parks & Rec", interviewer: "Jennifer Kowalski", interviewerTitle: "Recreation Coordinator", accent: "#1565C0", accentBg: "#EAF1FB", voiceGender: "female" },
-  { id: "swim", emoji: "🏊", title: "Swim Instructor", company: "South Fayette Aquatics", interviewer: "David Park", interviewerTitle: "Aquatics Director", accent: "#0277BD", accentBg: "#E8F4FB", voiceGender: "male" },
-  { id: "guard", emoji: "🛟", title: "Lifeguard", company: "South Fayette Aquatics", interviewer: "David Park", interviewerTitle: "Aquatics Director", accent: "#A32D2D", accentBg: "#FBEAEA", voiceGender: "male" },
-];
+// Premia Vantage Careers brand palette. The primary accent flows through
+// every button, ring and highlight; per-interviewer accentBg only tints the
+// avatar background so all four still read as the same brand.
+const BRAND = {
+  primary: "#1e293b",
+  accent: "#B8935A",
+  accentBg: "#FAF9F5",
+  name: "Premia Vantage Careers",
+};
 
-const BEHAVIORAL = [
-  "Tell me about a time you had to learn a new skill. How did you approach it?",
-  "Give me an example of a time when you set a goal and were able to achieve it.",
-  "Give me an example of a time when you motivated others.",
-  "Give me an example of a time when you showed initiative and took the lead.",
-  "Tell me about a time you tried to accomplish something and failed. What happened?",
-  "Tell me about a time you made a mistake and how you fixed it.",
-  "Tell me about a time you had to manage a project with a deadline. How did you stay on track?",
-  "Describe a time when a teammate was not pulling their weight. How did you handle that?",
-  "Tell me about a time you had to work with someone you didn't get along with. How did you handle it?",
-];
-const SITUATIONAL = [
-  "What would you do if you disagreed with a coworker or supervisor at work?",
-  "Describe a time you persuaded someone to see things your way.",
-  "Describe a time you made a decision that wasn't popular. Why did you make it?",
-  "Describe a stressful situation you faced and explain how you coped with it.",
-];
-const GENERAL = [
-  "What are your greatest strengths?",
-  "What is one area you are working to improve, and what are you doing about it?",
-  "What do you like to do in your free time?",
-  "Where do you see yourself in five years?",
-  "What are you most proud of from your time in high school?",
-  "What personal characteristics do you think are necessary for success in this role?",
-  "What do you know about our company, and what excites you most about this position?",
+const INTERVIEWERS = [
+  { personKey: "sarah",    interviewer: "Alexandra Kim",     interviewerTitle: "Senior Talent Partner",    voiceGender: "female", accentBg: "#FAF3E4" },
+  { personKey: "marcus",   interviewer: "Marcus Chen",       interviewerTitle: "Head of Recruiting",       voiceGender: "male",   accentBg: "#F0EEE4" },
+  { personKey: "jennifer", interviewer: "Jennifer Ross",     interviewerTitle: "Executive Recruiter",      voiceGender: "female", accentBg: "#EDF3EE" },
+  { personKey: "david",    interviewer: "David Park",        interviewerTitle: "VP, Talent Acquisition",   voiceGender: "male",   accentBg: "#EEF1F5" },
 ];
 
 const TYPE_LABELS = {
@@ -76,22 +57,27 @@ function detectFillers(text) {
   return { found, total };
 }
 
-function shuffle(a) { return [...a].sort(() => Math.random() - 0.5); }
+function pickInterviewer() {
+  return INTERVIEWERS[Math.floor(Math.random() * INTERVIEWERS.length)];
+}
 
-function buildQuestions() {
-  const beh = shuffle(BEHAVIORAL);
-  const mid = shuffle([
-    { text: beh[0], type: "behavioral" },
-    { text: beh[1], type: "behavioral" },
-    { text: shuffle(SITUATIONAL)[0], type: "situational" },
-    { text: shuffle(GENERAL)[0], type: "general" },
-  ]);
-  return [
-    { text: "Tell me about yourself.", type: "opening" },
-    ...mid,
-    { text: "Why do you want to work here? Why should we hire you over other candidates?", type: "closing" },
-    { text: "Do you have any questions for us?", type: "final" },
-  ];
+// Fallback set used when the JD analysis call fails. Keeps the app usable
+// even if Gemini is unreachable.
+function fallbackInterview() {
+  return {
+    role: "the role in this job description",
+    company: "the company",
+    seniority: "the level described",
+    questions: [
+      { text: "Tell me about yourself and what drew you to this role.", type: "opening" },
+      { text: "Walk me through a time you delivered a project against a tough deadline.", type: "behavioral" },
+      { text: "Describe a time you disagreed with a colleague. How did you handle it?", type: "behavioral" },
+      { text: "How would you approach the first 30 days in this role?", type: "situational" },
+      { text: "What is one area you are actively working to improve, and what are you doing about it?", type: "general" },
+      { text: "Why this company, and why now?", type: "closing" },
+      { text: "What questions do you have for us?", type: "final" },
+    ],
+  };
 }
 
 function fmtTime(s) { return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`; }
@@ -106,15 +92,43 @@ function cleanForSpeech(text) {
     .trim();
 }
 
-async function callAI(system, message) {
+async function callAI(system, message, opts = {}) {
   const res = await fetch('/api/feedback', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ system, message }),
+    body: JSON.stringify({ system, message, jsonMode: !!opts.jsonMode }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'AI error');
   return data.text;
+}
+
+async function analyzeJD(jdText) {
+  const sys = `You are a senior recruiter. Given a job description, return a JSON object that this shape:
+{
+  "role": string — the specific role title as it appears in the JD,
+  "company": string — the company name if present, otherwise "the company",
+  "seniority": string — one of "entry", "mid", "senior", "lead", "executive",
+  "questions": array of exactly 7 objects, each { "text": string, "type": string, "hint": string }
+}
+
+Question rules:
+- Q1 must have type "opening": tailored opener referencing the role.
+- Q2, Q3, Q4 must have type "behavioral": specific to competencies the JD asks for. Reference concrete skills or scenarios named in the JD.
+- Q5 must have type "situational": a hypothetical relevant to the day-to-day of this role.
+- Q6 must have type "closing": why-this-role / why-you.
+- Q7 must have type "final": prompt for the candidate's questions.
+- "hint" is one short sentence of guidance for the candidate. For behavioral, mention STAR.
+- Do NOT invent skills that are not in the JD. Prefer specificity over generic wording.
+- Keep each question under 30 words.
+
+Return only the JSON. No prose, no code fences.`;
+  const raw = await callAI(sys, `JOB DESCRIPTION:\n${jdText}`, { jsonMode: true });
+  const parsed = JSON.parse(raw);
+  if (!parsed || !Array.isArray(parsed.questions) || parsed.questions.length < 5) {
+    throw new Error("Analysis returned no questions");
+  }
+  return parsed;
 }
 
 async function fetchTTS(text, gender) {
@@ -140,13 +154,13 @@ async function getFeedback(job, question, answer, metrics) {
     const fill = metrics.fillers.total === 0 ? "No filler words" : `${metrics.fillers.total} filler words: ${Object.entries(metrics.fillers.found).map(([w, c]) => `"${w}" x${c}`).join(", ")}`;
     delivery = `\nSPEECH DATA: ${fill}. Pace: ${pace}. Length: ${metrics.wordCount} words, ${metrics.duration}s.`;
   }
-  const sys = `You are a warm interview coach for an 11th-grade student (age 16) practicing for a job interview at ${job.company} for ${job.title}. You will be read aloud to the student, so write in a natural spoken style — avoid bullet symbols, markdown, or lists. Use complete sentences throughout.${delivery}
+  const sys = `You are ${job.interviewer}, ${job.interviewerTitle}, giving direct interview coaching to a candidate practicing for ${job.role} at ${job.company}. Speak as a senior recruiter would — respectful, specific, adult. This will be read aloud, so write in natural spoken sentences — no bullet symbols, no markdown, no lists.${delivery}
 
-Respond in under 140 words. Use EXACTLY these labels at the start of each paragraph (no asterisks, just the plain label followed by a colon):
+Respond in under 160 words. Use EXACTLY these labels at the start of each paragraph (no asterisks, just the plain label followed by a colon):
 
-Assessment: [1–2 sentences on the answer overall]
+Assessment: [2 sentences on the answer overall]
 Strength: [One specific thing they did well]
-Tip: [One concrete improvement for next time]${metrics ? "\nDelivery: [Specific spoken feedback on filler words and pace]" : ""}${isBeh ? "\nSTAR check: [Which parts of Situation, Task, Action, Result were present, and what was missing]" : ""}${isFin ? "\nYour questions: [Were they thoughtful? Did they avoid asking about salary, hours, or benefits?]" : ""}`;
+Tip: [One concrete improvement — reference something specific to ${job.role} where possible]${metrics ? "\nDelivery: [Specific feedback on filler words and pace]" : ""}${isBeh ? "\nSTAR check: [Which parts of Situation, Task, Action, Result were present, and what was missing]" : ""}${isFin ? "\nYour questions: [Were they thoughtful and role-specific? Avoid coaching them to ask about compensation or benefits in the first round.]" : ""}`;
   return await callAI(sys, `Question: "${question.text}"\nAnswer: "${answer}"`);
 }
 
@@ -156,21 +170,24 @@ async function getSummary(job, answers) {
     if (a.metrics) s += `\nDelivery: ${a.metrics.wpm} WPM, ${a.metrics.fillers.total} filler words`;
     return s;
   }).join("\n\n");
-  const sys = `Write a final coaching summary for an 11th-grade student who just practiced for ${job.title} at ${job.company}. This will be read aloud to the student, so write in a warm, natural spoken style — no bullet points, no markdown, no asterisks. Use complete paragraphs throughout. Under 200 words.
+  const sys = `You are ${job.interviewer}, ${job.interviewerTitle}, closing out a mock interview with a candidate who practiced for ${job.role} at ${job.company}. Write a direct, specific coaching summary — respectful and adult, the way a senior recruiter would talk to a strong candidate. This will be read aloud, so write in complete spoken sentences — no bullet points, no markdown, no asterisks. Under 220 words.
 
 Use these plain labels at the start of each paragraph:
 
 Overall impression: [2–3 sentences]
 Top strength: [1–2 sentences]
-Biggest growth area: [1–2 sentences]
+Biggest growth area: [1–2 sentences — reference something specific to ${job.role} where possible]
 Speech habits: [Filler words and pace patterns across the session, or say "Your delivery was clean throughout" if no issues]
-Before your real mock interview: [Three action items written as a short paragraph, not a list]
-You've got this. [One encouraging closing sentence]`;
+Before your real interview: [Three action items written as a short paragraph, not a list]
+Signing off: [One direct closing sentence — no hype, no exclamation points]`;
   return await callAI(sys, log);
 }
 
 export default function App() {
-  const [screen, setScreen] = useState("select");
+  const [screen, setScreen] = useState("landing");
+  const [jdText, setJdText] = useState("");
+  const [roleLoading, setRoleLoading] = useState(false);
+  const [roleErr, setRoleErr] = useState("");
   const [job, setJob] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [qi, setQi] = useState(0);
@@ -379,7 +396,38 @@ export default function App() {
     setFinalText(""); setLiveText(""); setRecorded(false); setMetrics(null); setTextAns(""); setElapsed(0);
   }
 
-  function pickJob(j) { setJob(j); setQuestions(buildQuestions()); setScreen("tips"); }
+  async function generateInterview() {
+    const jd = jdText.trim();
+    if (jd.length < 40) {
+      setRoleErr("Please paste a longer job description so we can tailor questions.");
+      return;
+    }
+    setRoleErr("");
+    setRoleLoading(true);
+    let spec;
+    try {
+      spec = await analyzeJD(jd);
+    } catch (e) {
+      console.warn("JD analysis failed, using fallback:", e);
+      spec = fallbackInterview();
+    }
+    const interviewer = pickInterviewer();
+    setJob({
+      id: interviewer.personKey,
+      role: spec.role || "the role in this job description",
+      company: spec.company || "the company",
+      seniority: spec.seniority || "the level described",
+      interviewer: interviewer.interviewer,
+      interviewerTitle: interviewer.interviewerTitle,
+      voiceGender: interviewer.voiceGender,
+      accent: BRAND.accent,
+      accentBg: interviewer.accentBg,
+    });
+    setQuestions(spec.questions.slice(0, 7));
+    setRoleLoading(false);
+    setScreen("brief");
+  }
+
   function begin() { setQi(0); setAnswers([]); clearAns(); setFeedback(null); setQuestionReady(false); setScreen("interview"); }
 
   async function submit() {
@@ -412,14 +460,15 @@ export default function App() {
     if (qi < questions.length - 1) { setQi(qi + 1); clearAns(); setFeedback(null); setQuestionReady(false); }
     else {
       setScreen("summary"); setLoadSum(true);
-      try { setSummary(await getSummary(job, answers)); } catch { setSummary("Great job completing your practice interview!"); }
+      try { setSummary(await getSummary(job, answers)); } catch { setSummary("Overall impression: You completed the full interview. Reflect on the questions you found hardest and rehearse those specifically before your real interview."); }
       setLoadSum(false);
     }
   }
 
   function reset() {
     stopSpeaking();
-    setScreen("select"); setJob(null); setQuestions([]); setQi(0);
+    setScreen("landing"); setJob(null); setQuestions([]); setQi(0);
+    setJdText(""); setRoleErr(""); setRoleLoading(false);
     clearAns(); setFeedback(null); setAnswers([]); setSummary(null); setQuestionReady(false);
   }
 
@@ -461,62 +510,103 @@ export default function App() {
     );
   }
 
-  // ── SELECT ──
-  if (screen === "select") return (
+  // ── LANDING (paste JD) ──
+  if (screen === "landing") return (
     <div style={S.wrap}>
       <div style={S.center}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ color: "#6b7280", fontWeight: 500, letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 8, fontSize: 13 }}>College & Career Prep · South Fayette High School</div>
-          <div style={{ fontSize: 24, fontWeight: 500, marginBottom: 6 }}>Mock Interview Practice</div>
-          <div style={S.muted}>Select the job you are interviewing for to begin.</div>
+          <div style={{ color: BRAND.accent, fontWeight: 600, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 10, fontSize: 12 }}>{BRAND.name}</div>
+          <div style={{ fontSize: 28, fontWeight: 500, marginBottom: 8, color: BRAND.primary }}>Mock Interview, tailored to your role.</div>
+          <div style={S.muted}>Paste the job description you are preparing for. We build a targeted 7-question interview around it.</div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(270px, 1fr))", gap: 12 }}>
-          {JOBS.map(j => (
-            <button key={j.id} onClick={() => pickJob(j)} style={{ ...S.card, textAlign: "left", cursor: "pointer", transition: "border-color 0.15s" }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = j.accent}
-              onMouseLeave={e => e.currentTarget.style.borderColor = "#e5e7eb"}>
-              <div style={{ fontSize: 26, marginBottom: 10 }}>{j.emoji}</div>
-              <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 3 }}>{j.title}</div>
-              <div style={{ fontSize: 13, fontWeight: 500, color: j.accent, marginBottom: 4 }}>{j.company}</div>
-              <div style={S.muted}>with {j.interviewer}</div>
+
+        <div style={{ ...S.card, marginBottom: 14 }}>
+          <label htmlFor="jd" style={{ display: "block", fontSize: 12, fontWeight: 500, color: BRAND.primary, marginBottom: 6, letterSpacing: 0.3 }}>Job description</label>
+          <textarea
+            id="jd"
+            value={jdText}
+            onChange={e => setJdText(e.target.value)}
+            placeholder="Paste the full JD here — title, responsibilities, and requirements. The more you include, the better the questions."
+            style={{ width: "100%", minHeight: 220, border: "0.5px solid #d1d5db", borderRadius: 8, padding: "12px 14px", fontSize: 14, fontFamily: "inherit", resize: "vertical", color: "#111827", background: "#fff", outline: "none", lineHeight: 1.55, boxSizing: "border-box" }}
+            onFocus={e => e.target.style.borderColor = BRAND.accent}
+            onBlur={e => e.target.style.borderColor = "#d1d5db"}
+          />
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, flexWrap: "wrap", gap: 8 }}>
+            <span style={{ fontSize: 11, color: "#9ca3af" }}>{jdText.trim().length} characters · roughly {Math.max(0, Math.round(jdText.trim().split(/\s+/).filter(Boolean).length))} words</span>
+            <button
+              onClick={generateInterview}
+              disabled={roleLoading || jdText.trim().length < 40}
+              style={{
+                background: (roleLoading || jdText.trim().length < 40) ? "#e5e7eb" : BRAND.primary,
+                color: (roleLoading || jdText.trim().length < 40) ? "#9ca3af" : "#fff",
+                border: "none", borderRadius: 8, padding: "10px 22px", fontSize: 14, fontWeight: 500,
+                cursor: (roleLoading || jdText.trim().length < 40) ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", gap: 8,
+              }}
+            >
+              {roleLoading
+                ? <><span style={{ width: 14, height: 14, border: "2px solid #ffffff66", borderTopColor: "#fff", borderRadius: "50%", display: "inline-block", animation: "spin 0.7s linear infinite" }} /> Building your interview…</>
+                : "Generate my interview →"}
             </button>
-          ))}
+          </div>
+          {roleErr && (
+            <div role="alert" style={{ marginTop: 12, background: "#FBEAEA", border: "0.5px solid #EF9A9A", borderRadius: 8, padding: "10px 12px", fontSize: 13, color: "#A32D2D" }}>{roleErr}</div>
+          )}
         </div>
-        <div style={{ marginTop: 24, textAlign: "center", fontSize: 11, color: "#9ca3af", lineHeight: 1.6, maxWidth: 520, marginLeft: "auto", marginRight: "auto" }}>
-          Your answers are not stored by this app. Your spoken text is sent to Google (for feedback) and Microsoft (for the interviewer's voice) to generate this session. If you turn the camera on, video stays on your device — nothing is uploaded.
+
+        <div style={{ ...S.card, marginBottom: 14 }}>
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 8, color: BRAND.primary }}>What you get</div>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, color: "#4b5563", fontSize: 13, lineHeight: 1.9 }}>
+            <li>· Seven questions tailored to the JD, in a realistic interview arc</li>
+            <li>· A named interviewer who reads them aloud so you rehearse hearing them</li>
+            <li>· Coaching feedback on every answer — content plus delivery (pace and filler words)</li>
+            <li>· A downloadable session recap you can revisit before the real interview</li>
+          </ul>
+        </div>
+
+        <div style={{ textAlign: "center", fontSize: 11, color: "#9ca3af", lineHeight: 1.6, maxWidth: 520, margin: "0 auto" }}>
+          Your answers are not stored by {BRAND.name}. Your spoken text is sent to Google (for feedback) and Microsoft (for the interviewer's voice) to generate this session. If you turn the camera on, video stays on your device — nothing is uploaded.
         </div>
       </div>
     </div>
   );
 
-  // ── TIPS ──
-  if (screen === "tips") return (
+  // ── BRIEF (interview overview) ──
+  if (screen === "brief") return (
     <div style={S.wrap}>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       <div style={S.center}>
-        <button onClick={() => setScreen("select")} style={{ background: "none", border: "none", cursor: "pointer", color: "#6b7280", marginBottom: 16, padding: 0, fontSize: 13 }}>← Back</button>
+        <button onClick={() => setScreen("landing")} style={{ background: "none", border: "none", cursor: "pointer", color: "#6b7280", marginBottom: 16, padding: 0, fontSize: 13 }}>← Back to job description</button>
         <div style={{ ...S.card, marginBottom: 14, borderTop: `3px solid ${job.accent}` }}>
-          <div style={S.muted}>You are interviewing for</div>
-          <div style={{ fontWeight: 500, fontSize: 18, margin: "4px 0 2px" }}>{job.title}</div>
-          <div style={{ fontSize: 14, fontWeight: 500, color: job.accent, marginBottom: 2 }}>{job.company}</div>
-          <div style={S.muted}>with {job.interviewer}, {job.interviewerTitle}</div>
+          <div style={S.muted}>Your interview is set up for</div>
+          <div style={{ fontWeight: 500, fontSize: 18, margin: "4px 0 2px", color: BRAND.primary }}>{job.role}</div>
+          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 2 }}>at {job.company} · {job.seniority}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14, paddingTop: 12, borderTop: "0.5px solid #e5e7eb" }}>
+            <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={false} size={56} />
+            <div>
+              <div style={{ fontSize: 11, color: "#6b7280", letterSpacing: 0.3, textTransform: "uppercase" }}>Interviewing you</div>
+              <div style={{ fontWeight: 500, fontSize: 14, color: BRAND.primary }}>{job.interviewer}</div>
+              <div style={{ fontSize: 12, color: "#6b7280" }}>{job.interviewerTitle}</div>
+            </div>
+          </div>
         </div>
         <div style={{ ...S.card, marginBottom: 14 }}>
-          <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 12 }}>⭐ STAR method for behavioral questions</div>
-          {[["S","Situation","Set the scene — where and when?"],["T","Task","What was your responsibility?"],["A","Action","What steps did you specifically take?"],["R","Result","What happened? What did you learn?"]].map(([l,w,d]) => (
+          <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 12, color: BRAND.primary }}>STAR method for behavioral questions</div>
+          {[["S","Situation","Briefly frame the context — role, team, timeframe."],["T","Task","The specific responsibility you owned."],["A","Action","The steps you personally took — decisions and reasoning."],["R","Result","Quantified outcome where possible, plus what you learned."]].map(([l,w,d]) => (
             <div key={l} style={{ display: "flex", gap: 10, marginBottom: 8, alignItems: "flex-start" }}>
               <span style={{ background: job.accent, color: "#fff", borderRadius: 5, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 500, fontSize: 11, flexShrink: 0, marginTop: 1 }}>{l}</span>
-              <span style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}><strong style={{ color: "#111827", fontWeight: 500 }}>{w}</strong> — {d}</span>
+              <span style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.55 }}><strong style={{ color: "#111827", fontWeight: 500 }}>{w}</strong> — {d}</span>
             </div>
           ))}
         </div>
         <div style={{ ...S.card, marginBottom: 14 }}>
-          <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 8 }}>🎤 How this works</div>
-          <div style={{ color: "#6b7280", lineHeight: 1.8, fontSize: 13 }}>
-            {job.interviewer} will speak each question out loud — listen, then record your spoken answer. After you submit, {job.interviewer} will read your coaching feedback to you. You can replay any question or feedback at any time, and switch to typing if needed.
+          <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 8, color: BRAND.primary }}>How this works</div>
+          <div style={{ color: "#6b7280", lineHeight: 1.75, fontSize: 13 }}>
+            {job.interviewer} will read each question aloud — listen, then record your spoken answer. After you submit, you get concise coaching feedback plus notes on pace and filler words. You can replay any question, switch to typing, or retry a question at any time.
             {!speechOk && <span style={{ display: "block", marginTop: 8, fontSize: 12 }}>Note: Voice input is not available in this browser — you will type your answers.</span>}
           </div>
         </div>
-        <button onClick={begin} style={{ width: "100%", background: job.accent, color: "#fff", border: "none", borderRadius: 8, padding: 14, fontSize: 15, fontWeight: 500, cursor: "pointer" }}>
+        <button onClick={begin} style={{ width: "100%", background: BRAND.primary, color: "#fff", border: "none", borderRadius: 8, padding: 14, fontSize: 15, fontWeight: 500, cursor: "pointer" }}>
           Begin interview →
         </button>
       </div>
@@ -744,8 +834,8 @@ export default function App() {
     function downloadRecap() {
       const dateStr = new Date().toLocaleString();
       const lines = [];
-      lines.push(`Mock Interview Practice — Session Recap`);
-      lines.push(`${job.title} at ${job.company}`);
+      lines.push(`${BRAND.name} — Mock Interview Recap`);
+      lines.push(`${job.role} at ${job.company}`);
       lines.push(`Interviewer: ${job.interviewer}, ${job.interviewerTitle}`);
       lines.push(`Date: ${dateStr}`);
       lines.push("");
@@ -766,7 +856,7 @@ export default function App() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `mock-interview-${job.id}-${new Date().toISOString().slice(0, 10)}.txt`;
+      a.download = `premia-mock-interview-${new Date().toISOString().slice(0, 10)}.txt`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
@@ -779,8 +869,8 @@ export default function App() {
             <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
               <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={false} size={96} />
             </div>
-            <div style={{ fontSize: 22, fontWeight: 500, marginBottom: 4 }}>Interview complete</div>
-            <div style={S.muted}>{job.title} · {job.company}</div>
+            <div style={{ fontSize: 22, fontWeight: 500, marginBottom: 4, color: BRAND.primary }}>Interview complete</div>
+            <div style={S.muted}>{job.role} · {job.company}</div>
           </div>
 
           {voiceCount > 0 && (
@@ -824,8 +914,8 @@ export default function App() {
           <button onClick={downloadRecap} style={{ width: "100%", background: "#fff", color: job.accent, border: `0.5px solid ${job.accent}`, borderRadius: 8, padding: 12, fontSize: 14, fontWeight: 500, cursor: "pointer", marginBottom: 10 }}>
             ⬇ Download recap (text file)
           </button>
-          <button onClick={reset} style={{ width: "100%", background: job.accent, color: "#fff", border: "none", borderRadius: 8, padding: 14, fontSize: 15, fontWeight: 500, cursor: "pointer", marginBottom: 24 }}>
-            Practice again with a different job →
+          <button onClick={reset} style={{ width: "100%", background: BRAND.primary, color: "#fff", border: "none", borderRadius: 8, padding: 14, fontSize: 15, fontWeight: 500, cursor: "pointer", marginBottom: 24 }}>
+            Start a new interview →
           </button>
         </div>
       </div>

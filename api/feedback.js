@@ -53,16 +53,22 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { system, message } = req.body || {};
+    const { system, message, jsonMode } = req.body || {};
     if (typeof system !== 'string' || typeof message !== 'string') {
       return res.status(400).json({ error: 'Invalid request body' });
     }
-    if (system.length > 4000 || message.length > 8000) {
+    if (system.length > 6000 || message.length > 16000) {
       return res.status(413).json({ error: 'Request too large' });
     }
 
     const geminiKey = process.env.GEMINI_API_KEY;
     if (!geminiKey) return res.status(500).json({ error: 'Gemini key not configured' });
+
+    const generationConfig = {
+      maxOutputTokens: jsonMode ? 2000 : 1000,
+      temperature: jsonMode ? 0.4 : 0.7,
+    };
+    if (jsonMode) generationConfig.responseMimeType = 'application/json';
 
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
@@ -72,7 +78,7 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           contents: [{ parts: [{ text: message }] }],
           systemInstruction: { parts: [{ text: system }] },
-          generationConfig: { maxOutputTokens: 1000, temperature: 0.7 },
+          generationConfig,
         }),
       }
     );
