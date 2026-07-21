@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import Avatar from "./Avatar.jsx";
 import SelfView from "./SelfView.jsx";
+import { attachLipSync, detachLipSync } from "./lipsync.js";
 
 const JOBS = [
   { id: "canes", emoji: "🍗", title: "Restaurant Crewmember", company: "Raising Cane's Chicken Fingers", interviewer: "Sarah Mitchell", interviewerTitle: "Hiring Manager", accent: "#B8860B", accentBg: "#FDF8EC", voiceGender: "female" },
@@ -245,6 +246,7 @@ export default function App() {
   }, [feedback]);
 
   function stopCurrentAudio() {
+    detachLipSync();
     if (audioRef.current) {
       audioRef.current.pause();
       if (audioRef.current._blobUrl) URL.revokeObjectURL(audioRef.current._blobUrl);
@@ -263,14 +265,14 @@ export default function App() {
       const audio = new Audio(url);
       audio._blobUrl = url;
       audioRef.current = audio;
-      audio.onended = () => {
+      attachLipSync(audio);
+      const finish = () => {
         if (seq !== speakSeqRef.current) return;
+        detachLipSync();
         URL.revokeObjectURL(url); audioRef.current = null; setIsSpeaking(false); if (onEnd) onEnd();
       };
-      audio.onerror = () => {
-        if (seq !== speakSeqRef.current) return;
-        URL.revokeObjectURL(url); audioRef.current = null; setIsSpeaking(false); if (onEnd) onEnd();
-      };
+      audio.onended = finish;
+      audio.onerror = finish;
       await audio.play();
     } catch (e) {
       if (seq !== speakSeqRef.current) return;
