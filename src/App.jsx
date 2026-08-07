@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import Avatar from "./Avatar.jsx";
+import InterviewerFace from "./InterviewerFace.jsx";
 import SelfView from "./SelfView.jsx";
+import { connectSimli, disconnectSimli, SIMLI_ENABLED } from "./simliAvatar.js";
 
 // Premia Vantage Careers brand palette. The primary accent flows through
 // every button, ring and highlight; per-interviewer accentBg only tints the
@@ -12,11 +14,16 @@ const BRAND = {
   name: "Premia Vantage Careers",
 };
 
+// simliFaceId ties each interviewer to a Simli photoreal face for the
+// question-reading turns (see simliAvatar.js). Feedback/summary readback
+// stays on the plain DiceBear avatar regardless — only questions get the
+// photoreal treatment, which is also where the per-session Simli cost is
+// scoped to.
 const INTERVIEWERS = [
-  { personKey: "sarah",    interviewer: "Alexandra Kim",     interviewerTitle: "Senior Talent Partner",    voiceGender: "female", accentBg: "#FAF3E4" },
-  { personKey: "marcus",   interviewer: "Marcus Chen",       interviewerTitle: "Head of Recruiting",       voiceGender: "male",   accentBg: "#F0EEE4" },
-  { personKey: "jennifer", interviewer: "Jennifer Ross",     interviewerTitle: "Executive Recruiter",      voiceGender: "female", accentBg: "#EDF3EE" },
-  { personKey: "david",    interviewer: "David Park",        interviewerTitle: "VP, Talent Acquisition",   voiceGender: "male",   accentBg: "#EEF1F5" },
+  { personKey: "mia",   interviewer: "Mia Chen",     interviewerTitle: "Senior Talent Partner",  voiceGender: "female", accentBg: "#FAF3E4", simliFaceId: "cace3ef7-a4c4-425d-a8cf-a5358eb0c427" },
+  { personKey: "arjun", interviewer: "Arjun Patel",  interviewerTitle: "Head of Recruiting",     voiceGender: "male",   accentBg: "#F0EEE4", simliFaceId: "7e74d6e7-d559-4394-bd56-4923a3ab75ad" },
+  { personKey: "ryan",  interviewer: "Ryan Coleman", interviewerTitle: "Executive Recruiter",    voiceGender: "male",   accentBg: "#EDF3EE", simliFaceId: "dd10cb5a-d31d-4f12-b69f-6db3383c006e" },
+  { personKey: "elena", interviewer: "Elena Voss",   interviewerTitle: "VP, Talent Acquisition", voiceGender: "female", accentBg: "#EEF1F5", simliFaceId: "d2a5c7c6-fed9-4f55-bcb3-062f7cd20103" },
 ];
 
 const TYPE_LABELS = {
@@ -212,6 +219,8 @@ export default function App() {
   const [showStarHint, setShowStarHint] = useState(false);
   const [selfView, setSelfView] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
+  const [simliActive, setSimliActive] = useState(false);
+  const [simliConnecting, setSimliConnecting] = useState(false);
 
   const recRef = useRef(null);
   const stopFlagRef = useRef(false);
@@ -225,6 +234,8 @@ export default function App() {
   const voicesRef = useRef([]);
   const audioRef = useRef(null);
   const speakSeqRef = useRef(0);
+  const simliVideoRef = useRef(null);
+  const simliAudioSinkRef = useRef(null);
 
   useEffect(() => {
     if (!window.SpeechRecognition && !window.webkitSpeechRecognition) { setSpeechOk(false); setMode("text"); }
@@ -247,7 +258,7 @@ export default function App() {
       setShowStarHint(false);
       const q = questions[qi];
       const intro = qi === 0 ? `Hi, I'm ${job.interviewer}, ${job.interviewerTitle} at ${job.company}. Thanks for coming in today. Let's get started. ` : "";
-      speakText(`${intro}${q.text}`, job.voiceGender, () => setQuestionReady(true));
+      speakText(`${intro}${q.text}`, job.voiceGender, () => setQuestionReady(true), { useSimli: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qi, screen, retryKey]);
@@ -262,6 +273,11 @@ export default function App() {
   }, [feedback]);
 
   function stopCurrentAudio() {
+    if (simliActive || simliConnecting) {
+      disconnectSimli();
+      setSimliActive(false);
+      setSimliConnecting(false);
+    }
     if (audioRef.current) {
       audioRef.current.pause();
       if (audioRef.current._blobUrl) URL.revokeObjectURL(audioRef.current._blobUrl);
@@ -270,24 +286,49 @@ export default function App() {
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
 
-  async function speakText(text, gender = "female", onEnd = null) {
+  // opts.useSimli scopes the photoreal video layer to interviewer questions
+  // only — feedback and summary readback stay on plain audio, which is
+  // where the per-session Simli connected-time cost is bounded.
+  async function speakText(text, gender = "female", onEnd = null, opts = {}) {
     stopCurrentAudio();
     const seq = ++speakSeqRef.current;
     setIsSpeaking(true);
+    const wantSimli = !!opts.useSimli && SIMLI_ENABLED && job?.simliFaceId;
     try {
       const url = await fetchTTS(text, gender);
       if (seq !== speakSeqRef.current) { URL.revokeObjectURL(url); return; }
       const audio = new Audio(url);
       audio._blobUrl = url;
       audioRef.current = audio;
-      audio.onended = () => {
+
+      if (wantSimli) {
+        setSimliConnecting(true);
+        try {
+          await connectSimli({
+            faceId: job.simliFaceId,
+            videoElement: simliVideoRef.current,
+            audioElement: simliAudioSinkRef.current,
+            sourceAudioElement: audio,
+          });
+          if (seq !== speakSeqRef.current) { disconnectSimli(); URL.revokeObjectURL(url); return; }
+          setSimliActive(true);
+        } catch (e) {
+          console.warn("Simli connect failed, falling back to static avatar:", e);
+        }
+        setSimliConnecting(false);
+      }
+
+      const finish = () => {
         if (seq !== speakSeqRef.current) return;
+        // wantSimli, not the simliActive state var — state updates from the
+        // connect attempt above may not have flushed into this closure yet,
+        // but wantSimli is a plain local const so it's always correct here.
+        // disconnectSimli() is a safe no-op if the connect attempt failed.
+        if (wantSimli) { disconnectSimli(); setSimliActive(false); }
         URL.revokeObjectURL(url); audioRef.current = null; setIsSpeaking(false); if (onEnd) onEnd();
       };
-      audio.onerror = () => {
-        if (seq !== speakSeqRef.current) return;
-        URL.revokeObjectURL(url); audioRef.current = null; setIsSpeaking(false); if (onEnd) onEnd();
-      };
+      audio.onended = finish;
+      audio.onerror = finish;
       await audio.play();
     } catch (e) {
       if (seq !== speakSeqRef.current) return;
@@ -320,7 +361,7 @@ export default function App() {
     if (andReady) setQuestionReady(true);
   }
 
-  function replayQuestion() { speakText(questions[qi].text, job.voiceGender, () => setQuestionReady(true)); }
+  function replayQuestion() { speakText(questions[qi].text, job.voiceGender, () => setQuestionReady(true), { useSimli: true }); }
   function replayFeedback() { if (feedback) speakText(cleanForSpeech(feedback), job.voiceGender); }
 
   function cleanupMic() {
@@ -422,6 +463,7 @@ export default function App() {
       voiceGender: interviewer.voiceGender,
       accent: BRAND.accent,
       accentBg: interviewer.accentBg,
+      simliFaceId: interviewer.simliFaceId,
     });
     setQuestions(spec.questions.slice(0, 7));
     setRoleLoading(false);
@@ -633,7 +675,11 @@ export default function App() {
         `}</style>
         <div style={S.center}>
           <div style={{ ...S.card, marginBottom: 12, display: "flex", alignItems: "center", gap: 14 }}>
-            <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={isSpeaking} size={72} />
+            <InterviewerFace
+              jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={isSpeaking} size={72}
+              simliActive={simliActive} simliConnecting={simliConnecting}
+              videoRef={simliVideoRef} audioSinkRef={simliAudioSinkRef}
+            />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 500, fontSize: 14 }}>{job.interviewer}</div>
               <div style={S.muted}>{job.interviewerTitle} · {job.company}</div>

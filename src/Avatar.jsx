@@ -7,6 +7,11 @@ import avatarDavid from "./assets/avatar-david.svg";
 // For historical reasons the prop is still called jobId; the SF branch sets
 // job.id to the SF job code, and Avatar.SF maps that to a person. On Premia,
 // job.id IS the person key.
+//
+// This is the DiceBear fallback shown when Simli is off, still connecting,
+// or fails — it does not need to visually resemble the Simli persona (Mia,
+// Arjun, Ryan, Elena) it briefly stands in for, only to match gender/tone
+// reasonably so the crossfade in InterviewerFace doesn't jar.
 const ART = {
   sarah: avatarSarah,
   marcus: avatarMarcus,
@@ -19,6 +24,12 @@ const ART = {
   sfpark: avatarJennifer,
   swim: avatarDavid,
   guard: avatarDavid,
+  // Premia Simli persona keys — fallback image while the photoreal video
+  // connects or if it's unavailable.
+  mia: avatarSarah,
+  arjun: avatarMarcus,
+  ryan: avatarDavid,
+  elena: avatarJennifer,
 };
 
 export default function Avatar({ jobId, accent, accentBg, speaking, size = 140 }) {
