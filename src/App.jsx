@@ -1,12 +1,11 @@
 import { useState, useRef, useEffect } from "react";
-import Avatar from "./Avatar.jsx";
-import InterviewerFace from "./InterviewerFace.jsx";
+import VoiceWaveform from "./VoiceWaveform.jsx";
 import SelfView from "./SelfView.jsx";
-import { connectSimli, disconnectSimli, SIMLI_ENABLED } from "./simliAvatar.js";
+import { attachAudioAnalyser, detachAudioAnalyser } from "./audioLevel.js";
 
 // Premia Vantage Careers brand palette. The primary accent flows through
-// every button, ring and highlight; per-interviewer accentBg only tints the
-// avatar background so all four still read as the same brand.
+// every button, ring and highlight; per-interviewer accentBg tints the
+// waveform badge background so all four still read as the same brand.
 const BRAND = {
   primary: "#1e293b",
   accent: "#B8935A",
@@ -14,16 +13,11 @@ const BRAND = {
   name: "Premia Vantage Careers",
 };
 
-// simliFaceId ties each interviewer to a Simli photoreal face for the
-// question-reading turns (see simliAvatar.js). Feedback/summary readback
-// stays on the plain DiceBear avatar regardless — only questions get the
-// photoreal treatment, which is also where the per-session Simli cost is
-// scoped to.
 const INTERVIEWERS = [
-  { personKey: "mia",   interviewer: "Mia Chen",     interviewerTitle: "Senior Talent Partner",  voiceGender: "female", accentBg: "#FAF3E4", simliFaceId: "cace3ef7-a4c4-425d-a8cf-a5358eb0c427" },
-  { personKey: "arjun", interviewer: "Arjun Patel",  interviewerTitle: "Head of Recruiting",     voiceGender: "male",   accentBg: "#F0EEE4", simliFaceId: "7e74d6e7-d559-4394-bd56-4923a3ab75ad" },
-  { personKey: "ryan",  interviewer: "Ryan Coleman", interviewerTitle: "Executive Recruiter",    voiceGender: "male",   accentBg: "#EDF3EE", simliFaceId: "dd10cb5a-d31d-4f12-b69f-6db3383c006e" },
-  { personKey: "elena", interviewer: "Elena Voss",   interviewerTitle: "VP, Talent Acquisition", voiceGender: "female", accentBg: "#EEF1F5", simliFaceId: "d2a5c7c6-fed9-4f55-bcb3-062f7cd20103" },
+  { personKey: "mia",   interviewer: "Mia Chen",     interviewerTitle: "Senior Talent Partner",  voiceGender: "female", accentBg: "#FAF3E4" },
+  { personKey: "arjun", interviewer: "Arjun Patel",  interviewerTitle: "Head of Recruiting",     voiceGender: "male",   accentBg: "#F0EEE4" },
+  { personKey: "ryan",  interviewer: "Ryan Coleman", interviewerTitle: "Executive Recruiter",    voiceGender: "male",   accentBg: "#EDF3EE" },
+  { personKey: "elena", interviewer: "Elena Voss",   interviewerTitle: "VP, Talent Acquisition", voiceGender: "female", accentBg: "#EEF1F5" },
 ];
 
 const TYPE_LABELS = {
@@ -219,8 +213,6 @@ export default function App() {
   const [showStarHint, setShowStarHint] = useState(false);
   const [selfView, setSelfView] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
-  const [simliActive, setSimliActive] = useState(false);
-  const [simliConnecting, setSimliConnecting] = useState(false);
 
   const recRef = useRef(null);
   const stopFlagRef = useRef(false);
@@ -234,8 +226,6 @@ export default function App() {
   const voicesRef = useRef([]);
   const audioRef = useRef(null);
   const speakSeqRef = useRef(0);
-  const simliVideoRef = useRef(null);
-  const simliAudioSinkRef = useRef(null);
 
   useEffect(() => {
     if (!window.SpeechRecognition && !window.webkitSpeechRecognition) { setSpeechOk(false); setMode("text"); }
@@ -258,7 +248,7 @@ export default function App() {
       setShowStarHint(false);
       const q = questions[qi];
       const intro = qi === 0 ? `Hi, I'm ${job.interviewer}, ${job.interviewerTitle} at ${job.company}. Thanks for coming in today. Let's get started. ` : "";
-      speakText(`${intro}${q.text}`, job.voiceGender, () => setQuestionReady(true), { useSimli: true });
+      speakText(`${intro}${q.text}`, job.voiceGender, () => setQuestionReady(true));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qi, screen, retryKey]);
@@ -273,11 +263,7 @@ export default function App() {
   }, [feedback]);
 
   function stopCurrentAudio() {
-    if (simliActive || simliConnecting) {
-      disconnectSimli();
-      setSimliActive(false);
-      setSimliConnecting(false);
-    }
+    detachAudioAnalyser();
     if (audioRef.current) {
       audioRef.current.pause();
       if (audioRef.current._blobUrl) URL.revokeObjectURL(audioRef.current._blobUrl);
@@ -286,45 +272,20 @@ export default function App() {
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
 
-  // opts.useSimli scopes the photoreal video layer to interviewer questions
-  // only — feedback and summary readback stay on plain audio, which is
-  // where the per-session Simli connected-time cost is bounded.
-  async function speakText(text, gender = "female", onEnd = null, opts = {}) {
+  async function speakText(text, gender = "female", onEnd = null) {
     stopCurrentAudio();
     const seq = ++speakSeqRef.current;
     setIsSpeaking(true);
-    const wantSimli = !!opts.useSimli && SIMLI_ENABLED && job?.simliFaceId;
     try {
       const url = await fetchTTS(text, gender);
       if (seq !== speakSeqRef.current) { URL.revokeObjectURL(url); return; }
       const audio = new Audio(url);
       audio._blobUrl = url;
       audioRef.current = audio;
-
-      if (wantSimli) {
-        setSimliConnecting(true);
-        try {
-          await connectSimli({
-            faceId: job.simliFaceId,
-            videoElement: simliVideoRef.current,
-            audioElement: simliAudioSinkRef.current,
-            sourceAudioElement: audio,
-          });
-          if (seq !== speakSeqRef.current) { disconnectSimli(); URL.revokeObjectURL(url); return; }
-          setSimliActive(true);
-        } catch (e) {
-          console.warn("Simli connect failed, falling back to static avatar:", e);
-        }
-        setSimliConnecting(false);
-      }
-
+      attachAudioAnalyser(audio);
       const finish = () => {
         if (seq !== speakSeqRef.current) return;
-        // wantSimli, not the simliActive state var — state updates from the
-        // connect attempt above may not have flushed into this closure yet,
-        // but wantSimli is a plain local const so it's always correct here.
-        // disconnectSimli() is a safe no-op if the connect attempt failed.
-        if (wantSimli) { disconnectSimli(); setSimliActive(false); }
+        detachAudioAnalyser();
         URL.revokeObjectURL(url); audioRef.current = null; setIsSpeaking(false); if (onEnd) onEnd();
       };
       audio.onended = finish;
@@ -361,7 +322,7 @@ export default function App() {
     if (andReady) setQuestionReady(true);
   }
 
-  function replayQuestion() { speakText(questions[qi].text, job.voiceGender, () => setQuestionReady(true), { useSimli: true }); }
+  function replayQuestion() { speakText(questions[qi].text, job.voiceGender, () => setQuestionReady(true)); }
   function replayFeedback() { if (feedback) speakText(cleanForSpeech(feedback), job.voiceGender); }
 
   function cleanupMic() {
@@ -463,7 +424,6 @@ export default function App() {
       voiceGender: interviewer.voiceGender,
       accent: BRAND.accent,
       accentBg: interviewer.accentBg,
-      simliFaceId: interviewer.simliFaceId,
     });
     setQuestions(spec.questions.slice(0, 7));
     setRoleLoading(false);
@@ -624,7 +584,7 @@ export default function App() {
           <div style={{ fontWeight: 500, fontSize: 18, margin: "4px 0 2px", color: BRAND.primary }}>{job.role}</div>
           <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 2 }}>at {job.company} · {job.seniority}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14, paddingTop: 12, borderTop: "0.5px solid #e5e7eb" }}>
-            <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={false} size={56} />
+            <VoiceWaveform accent={job.accent} accentBg={job.accentBg} speaking={false} size={56} />
             <div>
               <div style={{ fontSize: 11, color: "#6b7280", letterSpacing: 0.3, textTransform: "uppercase" }}>Interviewing you</div>
               <div style={{ fontWeight: 500, fontSize: 14, color: BRAND.primary }}>{job.interviewer}</div>
@@ -669,17 +629,12 @@ export default function App() {
         <style>{`
           @keyframes ripple { 0% { transform: scale(1); opacity: 0.5; } 100% { transform: scale(1.8); opacity: 0; } }
           @keyframes micPulse { 0%,100% { box-shadow: 0 0 0 0 #C6282855; } 50% { box-shadow: 0 0 0 10px #C6282800; } }
-          @keyframes avatarGlow { 0%,100% { box-shadow: 0 0 0 2px ${job.accent}55; } 50% { box-shadow: 0 0 0 8px ${job.accent}22; } }
           @keyframes soundWave { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
           @keyframes spin { to { transform: rotate(360deg); } }
         `}</style>
         <div style={S.center}>
           <div style={{ ...S.card, marginBottom: 12, display: "flex", alignItems: "center", gap: 14 }}>
-            <InterviewerFace
-              jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={isSpeaking} size={72}
-              simliActive={simliActive} simliConnecting={simliConnecting}
-              videoRef={simliVideoRef} audioSinkRef={simliAudioSinkRef}
-            />
+            <VoiceWaveform accent={job.accent} accentBg={job.accentBg} speaking={isSpeaking} size={72} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 500, fontSize: 14 }}>{job.interviewer}</div>
               <div style={S.muted}>{job.interviewerTitle} · {job.company}</div>
@@ -913,7 +868,7 @@ export default function App() {
         <div style={S.center}>
           <div style={{ textAlign: "center", marginBottom: 24 }}>
             <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-              <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={false} size={96} />
+              <VoiceWaveform accent={job.accent} accentBg={job.accentBg} speaking={false} size={96} />
             </div>
             <div style={{ fontSize: 22, fontWeight: 500, marginBottom: 4, color: BRAND.primary }}>Interview complete</div>
             <div style={S.muted}>{job.role} · {job.company}</div>

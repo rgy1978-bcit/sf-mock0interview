@@ -5,20 +5,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "gen:avatars": "node gen-avatars.mjs",
-    "postinstall": "patch-package"
+    "preview": "vite preview"
   },
   "dependencies": {
     "react": "^18.3.0",
-    "react-dom": "^18.3.0",
-    "simli-client": "^3.0.2"
+    "react-dom": "^18.3.0"
   },
   "devDependencies": {
-    "@dicebear/collection": "^9.0.0",
-    "@dicebear/core": "^9.0.0",
     "@vitejs/plugin-react": "^4.3.0",
-    "patch-package": "^8.0.1",
     "vite": "^5.4.0"
   }
 }
