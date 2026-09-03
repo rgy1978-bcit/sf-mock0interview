@@ -1,10 +1,10 @@
-// Real-time amplitude sampler shared between speakText() and <Avatar>.
+// Real-time amplitude sampler shared between speakText() and <VoiceWaveform>.
 // One AudioContext for the whole app, one MediaElementSource per <audio>
 // (that's a hard browser rule — one source per element).
 //
-// The current amplitude sits at amplitudeRef.current, in [0, 1]. Avatar reads
-// it from its own rAF loop and drives a subtle scale/translate on the SVG.
-// No React state → no re-renders, no re-render storms at 60 fps.
+// The current amplitude sits at amplitudeRef.current, in [0, 1]. Consumers
+// read it from their own rAF loop and drive animation directly — no React
+// state, so no re-render storms at 60 fps.
 
 let audioCtx = null;
 let currentSource = null;
@@ -23,8 +23,8 @@ function ensureCtx() {
   return audioCtx;
 }
 
-export function attachLipSync(audioElement) {
-  detachLipSync();
+export function attachAudioAnalyser(audioElement) {
+  detachAudioAnalyser();
   const ctx = ensureCtx();
   if (!ctx || !audioElement) return;
   try {
@@ -54,12 +54,12 @@ export function attachLipSync(audioElement) {
   } catch (e) {
     // createMediaElementSource throws if called twice on the same element,
     // and some older browsers don't expose the constructor. Fail quietly and
-    // let the avatar fall back to the idle-breathing animation.
-    console.warn("lipsync attach failed", e);
+    // let the waveform fall back to its idle animation.
+    console.warn("audio analyser attach failed", e);
   }
 }
 
-export function detachLipSync() {
+export function detachAudioAnalyser() {
   if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
   if (currentSource) { try { currentSource.disconnect(); } catch {} currentSource = null; }
   if (currentAnalyser) { try { currentAnalyser.disconnect(); } catch {} currentAnalyser = null; }
