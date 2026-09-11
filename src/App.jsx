@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
-import Avatar from "./Avatar.jsx";
+import VoiceWaveform from "./VoiceWaveform.jsx";
 import SelfView from "./SelfView.jsx";
-import { attachLipSync, detachLipSync } from "./lipsync.js";
+import { attachAudioAnalyser, detachAudioAnalyser } from "./audioLevel.js";
 
 const JOBS = [
   { id: "canes", emoji: "🍗", title: "Restaurant Crewmember", company: "Raising Cane's Chicken Fingers", interviewer: "Sarah Mitchell", interviewerTitle: "Hiring Manager", accent: "#B8860B", accentBg: "#FDF8EC", voiceGender: "female" },
@@ -246,7 +246,7 @@ export default function App() {
   }, [feedback]);
 
   function stopCurrentAudio() {
-    detachLipSync();
+    detachAudioAnalyser();
     if (audioRef.current) {
       audioRef.current.pause();
       if (audioRef.current._blobUrl) URL.revokeObjectURL(audioRef.current._blobUrl);
@@ -265,10 +265,10 @@ export default function App() {
       const audio = new Audio(url);
       audio._blobUrl = url;
       audioRef.current = audio;
-      attachLipSync(audio);
+      attachAudioAnalyser(audio);
       const finish = () => {
         if (seq !== speakSeqRef.current) return;
-        detachLipSync();
+        detachAudioAnalyser();
         URL.revokeObjectURL(url); audioRef.current = null; setIsSpeaking(false); if (onEnd) onEnd();
       };
       audio.onended = finish;
@@ -539,13 +539,12 @@ export default function App() {
         <style>{`
           @keyframes ripple { 0% { transform: scale(1); opacity: 0.5; } 100% { transform: scale(1.8); opacity: 0; } }
           @keyframes micPulse { 0%,100% { box-shadow: 0 0 0 0 #C6282855; } 50% { box-shadow: 0 0 0 10px #C6282800; } }
-          @keyframes avatarGlow { 0%,100% { box-shadow: 0 0 0 2px ${job.accent}55; } 50% { box-shadow: 0 0 0 8px ${job.accent}22; } }
           @keyframes soundWave { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
           @keyframes spin { to { transform: rotate(360deg); } }
         `}</style>
         <div style={S.center}>
           <div style={{ ...S.card, marginBottom: 12, display: "flex", alignItems: "center", gap: 14 }}>
-            <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={isSpeaking} size={72} />
+            <VoiceWaveform accent={job.accent} accentBg={job.accentBg} speaking={isSpeaking} size={72} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 500, fontSize: 14 }}>{job.interviewer}</div>
               <div style={S.muted}>{job.interviewerTitle} · {job.company}</div>
@@ -779,7 +778,7 @@ export default function App() {
         <div style={S.center}>
           <div style={{ textAlign: "center", marginBottom: 24 }}>
             <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-              <Avatar jobId={job.id} accent={job.accent} accentBg={job.accentBg} speaking={false} size={96} />
+              <VoiceWaveform accent={job.accent} accentBg={job.accentBg} speaking={false} size={96} />
             </div>
             <div style={{ fontSize: 22, fontWeight: 500, marginBottom: 4 }}>Interview complete</div>
             <div style={S.muted}>{job.title} · {job.company}</div>
